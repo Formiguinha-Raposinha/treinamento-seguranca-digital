@@ -28,6 +28,7 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'error' | 'info' | 'warning' } | null>(null);
   const recognitionRef = useRef<any>(null);
   const autoClearTimerRef = useRef<any>(null);
+  const interimTextRef = useRef<string>('');
 
   // Limpa o timer de status ao desmontar
   useEffect(() => {
@@ -51,7 +52,18 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
     }
   };
 
+  const commitInterimText = () => {
+    const t = interimTextRef.current.trim();
+    if (t) {
+      setInputText(prev => (prev ? `${prev} ${t}` : t));
+      setUsedAudioForInput(true);
+    }
+    interimTextRef.current = '';
+    setInterimText('');
+  };
+
   const stopListening = () => {
+    commitInterimText();
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
@@ -59,10 +71,9 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
       recognitionRef.current = null;
     }
     setIsListening(false);
-    setInterimText('');
   };
 
-  const handleToggleMic = async () => {
+  const handleToggleMic = () => {
     if (disabled) return;
 
     // Se já estiver gravando, para imediatamente
@@ -85,32 +96,6 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
       return;
     }
 
-    // Solicita explicitamente permissão de mídia para evitar bloqueio silencioso do navegador
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        // Encerra os tracks imediatamente para liberar o dispositivo de áudio para o SpeechRecognition
-        stream.getTracks().forEach(track => track.stop());
-      } catch (err: any) {
-        console.warn('Erro na permissão de microfone:', err);
-        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-          showStatus(
-            'Microfone bloqueado pelo navegador. Clique no ícone de cadeado/configurações ao lado do link do site e selecione "Permitir Microfone".',
-            'error',
-            10000
-          );
-          return;
-        } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-          showStatus(
-            'Nenhum microfone físico foi encontrado conectado ao seu computador.',
-            'error',
-            8000
-          );
-          return;
-        }
-      }
-    }
-
     try {
       const recognition = new SpeechRecognitionClass();
       recognition.lang = 'pt-BR';
@@ -120,8 +105,13 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
 
       recognition.onstart = () => {
         setIsListening(true);
+        interimTextRef.current = '';
         setInterimText('');
         showStatus('🎙️ Microfone ligado! Pode falar sua resposta...', 'info', 5000);
+      };
+
+      recognition.onspeechstart = () => {
+        showStatus('🎙️ Ouvindo sua voz... continue falando.', 'info', 6000);
       };
 
       recognition.onresult = (event: any) => {
@@ -138,11 +128,15 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
         }
 
         if (final) {
-          setInputText(prev => (prev ? `${prev} ${final.trim()}` : final.trim()));
+          const finalTrim = final.trim();
+          setInputText(prev => (prev ? `${prev} ${finalTrim}` : finalTrim));
+          interimTextRef.current = '';
           setInterimText('');
           setUsedAudioForInput(true);
         } else if (interim) {
-          setInterimText(interim);
+          const interimTrim = interim.trim();
+          interimTextRef.current = interimTrim;
+          setInterimText(interimTrim);
           setUsedAudioForInput(true);
         }
       };
@@ -150,6 +144,7 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
       recognition.onerror = (event: any) => {
         console.warn('Web Speech API onerror:', event.error);
         setIsListening(false);
+        interimTextRef.current = '';
         setInterimText('');
 
         if (event.error === 'not-allowed') {
@@ -159,19 +154,27 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
             10000
           );
         } else if (event.error === 'no-speech') {
-          showStatus('Nenhuma fala foi detectada. Tente falar novamente mais próximo ao microfone.', 'warning', 6000);
+          showStatus(
+            'Nenhuma fala foi detectada. Confira no ícone de microfone/cadeado do navegador se o microfone correto está selecionado e tente falar novamente (ou digite sua resposta).',
+            'warning',
+            8000
+          );
         } else if (event.error === 'audio-capture') {
           showStatus('Nenhum dispositivo de microfone funcionando no momento.', 'error', 8000);
         } else if (event.error === 'network') {
-          showStatus('Falha de conexão com o serviço de voz. Verifique sua conexão com a internet.', 'warning', 8000);
+          showStatus(
+            'O serviço de reconhecimento de voz do navegador não respondeu (bloqueio de rede ou navegador sem suporte). Tente no Google Chrome ou digite sua resposta.',
+            'warning',
+            8000
+          );
         } else if (event.error !== 'aborted') {
           showStatus(`Aviso do microfone: ${event.error}`, 'warning', 5000);
         }
       };
 
       recognition.onend = () => {
+        commitInterimText();
         setIsListening(false);
-        setInterimText('');
       };
 
       recognitionRef.current = recognition;
@@ -323,7 +326,7 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
         <div className="relative flex-1">
           <input
             type="text"
-            value={inputText}
+            value={isListening && interimText ? `${inputText}${inputText ? ' ' : ''}${interimText}` : inputText}
             onChange={(e) => {
               setInputText(e.target.value);
               setUsedAudioForInput(false);
