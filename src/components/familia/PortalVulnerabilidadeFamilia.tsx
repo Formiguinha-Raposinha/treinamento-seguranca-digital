@@ -5,6 +5,7 @@ import { audioService } from '../../services/audioService';
 import { authService, Perfil } from '../../services/authService';
 import { nuvemService } from '../../services/nuvemService';
 import { FeedbackModal } from '../FeedbackModal';
+import { FAIXAS_ETARIAS, formatarFaixaEtaria } from '../../constants/faixasEtarias';
 import { 
   ArrowLeft, 
   ShieldCheck, 
@@ -133,7 +134,7 @@ export const FamilyVulnerabilityPortal: React.FC<FamilyVulnerabilityPortalProps>
         const mappedSeniors: SeniorClient[] = vinculados.map(v => ({
           id: v.id,
           name: v.name || 'Participante',
-          ageGroup: v.age_group || '70-79',
+          ageGroup: v.age_group || 'nao-informar',
           phone: v.phone || undefined,
           caregiverName: perfil.name || 'Familiar',
           caregiverPhone: perfil.phone || '',
@@ -522,7 +523,7 @@ export const FamilyVulnerabilityPortal: React.FC<FamilyVulnerabilityPortalProps>
                   {activeSenior.name}
                 </h2>
                 <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">
-                  Faixa: {activeSenior.ageGroup} anos
+                  Faixa: {formatarFaixaEtaria(activeSenior.ageGroup)}
                 </span>
                 <span className={`text-xs font-black px-2.5 py-0.5 rounded-full border ${riskBadgeColor}`}>
                   {report.riskLevel === 'baixo' ? '🛡️ Risco Baixo' : report.riskLevel === 'moderado' ? '⚠️ Risco Moderado' : '🚨 Risco Alto'}
@@ -604,9 +605,9 @@ export const FamilyVulnerabilityPortal: React.FC<FamilyVulnerabilityPortalProps>
                   onChange={(e) => setEditAgeGroup(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold"
                 >
-                  <option value="60-69">60 a 69 anos</option>
-                  <option value="70-79">70 a 79 anos</option>
-                  <option value="80+">80 anos ou mais</option>
+                  {FAIXAS_ETARIAS.map(f => (
+                    <option key={f.value} value={f.value}>{f.label}</option>
+                  ))}
                 </select>
               </div>
 

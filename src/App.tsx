@@ -61,7 +61,7 @@ export const App: React.FC = () => {
     const seniorLocal: SeniorClient = {
       id: p.id,
       name: p.name || 'Participante',
-      ageGroup: p.age_group || '70-79',
+      ageGroup: p.age_group || 'nao-informar',
       phone: p.phone || undefined,
       caregiverName: 'Familiar Vinculado',
       caregiverPhone: '',

@@ -388,7 +388,7 @@ export const PainelAdmin: React.FC<PainelAdminProps> = ({
                 className="px-3 py-1.5 rounded-xl border bg-white text-slate-900 font-bold"
               >
                 <option value="todos">Todos os autores</option>
-                <option value="senior">Participante (Idoso)</option>
+                <option value="senior">Participante</option>
                 <option value="family">Familiar / Cuidador</option>
               </select>
 

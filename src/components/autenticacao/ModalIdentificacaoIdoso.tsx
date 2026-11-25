@@ -16,6 +16,7 @@ import { dbService } from '../../services/bancoDadosService';
 import { progressoUsuarioService } from '../../services/progressoUsuarioService';
 import { audioService } from '../../services/audioService';
 import { SeniorClient } from '../../types/bancoDados';
+import { FAIXAS_ETARIAS, formatarFaixaEtaria } from '../../constants/faixasEtarias';
 
 interface ModalIdentificacaoIdosoProps {
   isOpen: boolean;
@@ -38,7 +39,7 @@ export const ModalIdentificacaoIdoso: React.FC<ModalIdentificacaoIdosoProps> = (
 
   // Form states
   const [name, setName] = useState('');
-  const [ageGroup, setAgeGroup] = useState<'60-69' | '70-79' | '80+'>('70-79');
+  const [ageGroup, setAgeGroup] = useState<string>('nao-informar');
   const [phone, setPhone] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
 
@@ -242,34 +243,27 @@ export const ModalIdentificacaoIdoso: React.FC<ModalIdentificacaoIdosoProps> = (
               )}
             </div>
 
-            {/* Faixa Etária (Botões de Toque Fácil para Idosos) */}
+            {/* Faixa Etária */}
             <div>
               <label className="block text-xs sm:text-sm font-black mb-1.5 flex items-center gap-1.5">
                 <Calendar className="w-4 h-4 text-emerald-600" />
                 <span>Sua faixa de idade:</span>
               </label>
-              <div className="grid grid-cols-3 gap-2">
-                {(['60-69', '70-79', '80+'] as const).map((range) => {
-                  const isSelected = ageGroup === range;
-                  const label = range === '60-69' ? '60 a 69 anos' : range === '70-79' ? '70 a 79 anos' : '80 anos ou mais';
-                  return (
-                    <button
-                      key={range}
-                      type="button"
-                      onClick={() => setAgeGroup(range)}
-                      className={`p-2.5 sm:p-3 rounded-2xl border-2 font-black text-xs sm:text-sm text-center transition-all active:scale-95 ${
-                        isSelected
-                          ? highContrast
-                            ? 'bg-yellow-400 text-black border-yellow-500 shadow-md'
-                            : 'bg-emerald-50 text-emerald-950 border-emerald-600 ring-2 ring-emerald-200 shadow-sm'
-                          : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
+              <select
+                value={ageGroup}
+                onChange={(e) => setAgeGroup(e.target.value)}
+                className={`w-full px-4 py-3 rounded-2xl border-2 outline-none font-bold transition-all text-sm ${
+                  highContrast
+                    ? 'bg-zinc-950 border-yellow-400 text-white'
+                    : 'bg-slate-50 border-slate-300 text-slate-900 focus:border-emerald-600 focus:bg-white'
+                }`}
+              >
+                {FAIXAS_ETARIAS.map((f) => (
+                  <option key={f.value} value={f.value}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/* Telefone / WhatsApp (Opcional) */}
@@ -358,7 +352,7 @@ export const ModalIdentificacaoIdoso: React.FC<ModalIdentificacaoIdosoProps> = (
                             )}
                           </div>
                           <p className="text-xs text-slate-500 mt-0.5">
-                            Faixa etária: {senior.ageGroup} anos {senior.phone ? `• ${senior.phone}` : ''}
+                            Faixa etária: {formatarFaixaEtaria(senior.ageGroup)} {senior.phone ? `• ${senior.phone}` : ''}
                           </p>
                         </div>
                       </div>

@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { audioService } from '../../services/audioService';
+import { FAIXAS_ETARIAS } from '../../constants/faixasEtarias';
 
 interface TelaLoginProps {
   onAuthSuccess: () => Promise<void> | void;
@@ -35,7 +36,7 @@ export const TelaLogin: React.FC<TelaLoginProps> = ({
   const [nomeIdoso, setNomeIdoso] = useState('');
   const [telefoneIdoso, setTelefoneIdoso] = useState('');
   const [pinIdoso, setPinIdoso] = useState('');
-  const [faixaEtaria, setFaixaEtaria] = useState('70-79');
+  const [faixaEtaria, setFaixaEtaria] = useState('');
 
   // Campos Familiar / Admin
   const [nomeFamiliar, setNomeFamiliar] = useState('');
@@ -173,7 +174,7 @@ export const TelaLogin: React.FC<TelaLoginProps> = ({
           }`}
         >
           <User className="w-5 h-5" />
-          <span>Participante (Idoso)</span>
+          <span>Participante</span>
         </button>
 
         <button
@@ -258,7 +259,7 @@ export const TelaLogin: React.FC<TelaLoginProps> = ({
                     type="text"
                     value={nomeIdoso}
                     onChange={(e) => setNomeIdoso(e.target.value)}
-                    placeholder="Ex.: Dona Maria da Silva"
+                    placeholder="Ex.: Maria da Silva"
                     required
                     className={`w-full px-4 py-3 rounded-2xl text-base font-semibold ${inputCls}`}
                   />
@@ -268,11 +269,13 @@ export const TelaLogin: React.FC<TelaLoginProps> = ({
                   <select
                     value={faixaEtaria}
                     onChange={(e) => setFaixaEtaria(e.target.value)}
+                    required
                     className={`w-full px-4 py-3 rounded-2xl text-base font-semibold ${inputCls}`}
                   >
-                    <option value="60-69">60 a 69 anos</option>
-                    <option value="70-79">70 a 79 anos</option>
-                    <option value="80+">80 anos ou mais</option>
+                    <option value="">Selecione sua faixa de idade</option>
+                    {FAIXAS_ETARIAS.map(f => (
+                      <option key={f.value} value={f.value}>{f.label}</option>
+                    ))}
                   </select>
                 </div>
               </>
