@@ -27,13 +27,19 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
   const [usedAudioForInput, setUsedAudioForInput] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'error' | 'info' | 'warning' } | null>(null);
   const recognitionRef = useRef<any>(null);
-  const autoClearTimerRef = useRef<any>(null);
+  const autoClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const interimTextRef = useRef<string>('');
+  const shouldKeepListeningRef = useRef<boolean>(false);
+  const ignoreResultsRef = useRef<boolean>(false);
+  const hasShownStartStatusRef = useRef<boolean>(false);
 
-  // Limpa o timer de status ao desmontar
+  // Limpa timers e aborta reconhecimento ao desmontar
   useEffect(() => {
     return () => {
+      shouldKeepListeningRef.current = false;
       if (autoClearTimerRef.current) clearTimeout(autoClearTimerRef.current);
+      if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
       if (recognitionRef.current) {
         try {
           recognitionRef.current.abort();
@@ -62,32 +68,47 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
     setInterimText('');
   };
 
-  const stopListening = () => {
-    commitInterimText();
+  const stopListening = (preserveInterim = true) => {
+    shouldKeepListeningRef.current = false;
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
+
+    if (preserveInterim) {
+      commitInterimText();
+    } else {
+      ignoreResultsRef.current = true;
+      interimTextRef.current = '';
+      setInterimText('');
+    }
+
     if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (_) {}
+      const rec = recognitionRef.current;
       recognitionRef.current = null;
+      try {
+        if (preserveInterim) {
+          rec.stop();
+        } else {
+          rec.abort();
+        }
+      } catch (_) {}
     }
     setIsListening(false);
   };
 
-  const handleToggleMic = () => {
-    if (disabled) return;
-
-    // Se já estiver gravando, para imediatamente
-    if (isListening) {
-      stopListening();
-      showStatus('Gravação finalizada.', 'info', 3000);
-      return;
+  // Se o chat ficar desabilitado (fim da simulação), encerra o microfone automaticamente
+  useEffect(() => {
+    if (disabled && shouldKeepListeningRef.current) {
+      stopListening(true);
     }
+  }, [disabled]);
 
-    // Para áudio sintetizado em execução para não capturar o próprio som dos alto-falantes
-    audioService.stop();
-
+  const startRecognitionSession = () => {
     const SpeechRecognitionClass = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognitionClass) {
+      shouldKeepListeningRef.current = false;
+      setIsListening(false);
       showStatus(
         'Seu navegador não possui suporte ao reconhecimento de voz nativo. Recomendamos usar o Google Chrome ou Microsoft Edge.',
         'warning',
@@ -99,22 +120,26 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
     try {
       const recognition = new SpeechRecognitionClass();
       recognition.lang = 'pt-BR';
-      recognition.continuous = false;
+      recognition.continuous = true;
       recognition.interimResults = true;
       recognition.maxAlternatives = 1;
+      ignoreResultsRef.current = false;
 
       recognition.onstart = () => {
         setIsListening(true);
-        interimTextRef.current = '';
-        setInterimText('');
-        showStatus('🎙️ Microfone ligado! Pode falar sua resposta...', 'info', 5000);
+        if (!hasShownStartStatusRef.current) {
+          hasShownStartStatusRef.current = true;
+          showStatus('🎙️ Microfone ligado! Pode falar — clique em Enviar quando terminar.', 'info', 5000);
+        }
       };
 
       recognition.onspeechstart = () => {
-        showStatus('🎙️ Ouvindo sua voz... continue falando.', 'info', 6000);
+        showStatus('🎙️ Ouvindo sua voz...', 'info', 4000);
       };
 
       recognition.onresult = (event: any) => {
+        if (ignoreResultsRef.current) return;
+
         let interim = '';
         let final = '';
 
@@ -129,35 +154,46 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
 
         if (final) {
           const finalTrim = final.trim();
-          setInputText(prev => (prev ? `${prev} ${finalTrim}` : finalTrim));
+          if (finalTrim) {
+            setInputText(prev => (prev ? `${prev} ${finalTrim}` : finalTrim));
+          }
           interimTextRef.current = '';
           setInterimText('');
           setUsedAudioForInput(true);
-        } else if (interim) {
+        }
+
+        if (interim) {
           const interimTrim = interim.trim();
           interimTextRef.current = interimTrim;
           setInterimText(interimTrim);
           setUsedAudioForInput(true);
+        } else if (!final) {
+          interimTextRef.current = '';
+          setInterimText('');
         }
       };
 
       recognition.onerror = (event: any) => {
         console.warn('Web Speech API onerror:', event.error);
+
+        // Em pausas de fala, mantém ligado para reiniciar automaticamente no onend
+        if (event.error === 'no-speech' && shouldKeepListeningRef.current) {
+          return;
+        }
+        if (event.error === 'aborted') {
+          return;
+        }
+
+        shouldKeepListeningRef.current = false;
         setIsListening(false);
         interimTextRef.current = '';
         setInterimText('');
 
-        if (event.error === 'not-allowed') {
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
           showStatus(
             'Permissão de microfone negada. Clique no cadeado ao lado do link do navegador e habilite o microfone.',
             'error',
             10000
-          );
-        } else if (event.error === 'no-speech') {
-          showStatus(
-            'Nenhuma fala foi detectada. Confira no ícone de microfone/cadeado do navegador se o microfone correto está selecionado e tente falar novamente (ou digite sua resposta).',
-            'warning',
-            8000
           );
         } else if (event.error === 'audio-capture') {
           showStatus('Nenhum dispositivo de microfone funcionando no momento.', 'error', 8000);
@@ -167,34 +203,64 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
             'warning',
             8000
           );
-        } else if (event.error !== 'aborted') {
+        } else {
           showStatus(`Aviso do microfone: ${event.error}`, 'warning', 5000);
         }
       };
 
       recognition.onend = () => {
-        commitInterimText();
-        setIsListening(false);
+        recognitionRef.current = null;
+        if (!ignoreResultsRef.current) {
+          commitInterimText();
+        }
+        if (shouldKeepListeningRef.current && !disabled) {
+          if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+          restartTimerRef.current = setTimeout(() => {
+            if (shouldKeepListeningRef.current) {
+              startRecognitionSession();
+            }
+          }, 150);
+        } else {
+          setIsListening(false);
+        }
       };
 
       recognitionRef.current = recognition;
       recognition.start();
     } catch (err: any) {
       console.error('Falha ao iniciar SpeechRecognition:', err);
+      shouldKeepListeningRef.current = false;
       setIsListening(false);
       showStatus('Não foi possível ativar o microfone neste momento. Você pode digitar sua resposta.', 'warning', 6000);
     }
   };
 
+  const handleToggleMic = () => {
+    if (disabled) return;
+
+    // Se já estiver gravando, para imediatamente mantendo o texto falado
+    if (isListening || shouldKeepListeningRef.current) {
+      stopListening(true);
+      showStatus('Microfone desligado.', 'info', 3000);
+      return;
+    }
+
+    // Para áudio sintetizado em execução para não capturar o próprio som dos alto-falantes
+    audioService.stop();
+    hasShownStartStatusRef.current = false;
+    shouldKeepListeningRef.current = true;
+    startRecognitionSession();
+  };
+
   const handleSend = () => {
-    const combined = `${inputText} ${interimText}`.trim();
+    const combined = `${inputText} ${interimTextRef.current}`.trim();
     if (!combined || disabled) return;
-    
+
     const inputType: 'typed' | 'audio' = usedAudioForInput ? 'audio' : 'typed';
+    stopListening(false);
     setInputText('');
     setInterimText('');
     setUsedAudioForInput(false);
-    stopListening();
     onSendMessage(combined, inputType);
   };
 
@@ -207,7 +273,7 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
 
   const handleSelectChip = (choice: UserChoice) => {
     if (disabled) return;
-    stopListening();
+    stopListening(false);
     setUsedAudioForInput(false);
     onSendMessage(choice.text, 'typed');
   };
@@ -329,6 +395,8 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
             value={isListening && interimText ? `${inputText}${inputText ? ' ' : ''}${interimText}` : inputText}
             onChange={(e) => {
               setInputText(e.target.value);
+              interimTextRef.current = '';
+              setInterimText('');
               setUsedAudioForInput(false);
             }}
             onKeyDown={handleKeyDown}
@@ -379,14 +447,17 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
           <div className="flex items-center gap-2 overflow-hidden">
             <span className="w-2.5 h-2.5 rounded-full bg-red-600 animate-ping shrink-0" />
             <p className="text-xs text-red-900 font-bold truncate">
-              {interimText ? `"${interimText}..."` : 'Ouvindo... pode falar agora'}
+              {interimText
+                ? `"${interimText}..."`
+                : 'Ouvindo continuamente... clique em Enviar ou Parar quando terminar'}
             </p>
           </div>
           <button
-            onClick={stopListening}
+            type="button"
+            onClick={() => stopListening(true)}
             className="text-[11px] font-black text-red-700 hover:text-red-900 underline shrink-0"
           >
-            Concluir
+            Parar
           </button>
         </div>
       )}
