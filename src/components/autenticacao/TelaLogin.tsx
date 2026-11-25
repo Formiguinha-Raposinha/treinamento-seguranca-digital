@@ -52,11 +52,22 @@ export const TelaLogin: React.FC<TelaLoginProps> = ({
     'text-lg sm:text-xl'
   ][fontSizeLevel] || 'text-base sm:text-lg';
 
+  const limparCampos = () => {
+    setNomeIdoso('');
+    setTelefoneIdoso('');
+    setPinIdoso('');
+    setFaixaEtaria('');
+    setNomeFamiliar('');
+    setEmail('');
+    setSenha('');
+    setErro(null);
+  };
+
   const trocarAba = (novaAba: AbaLogin) => {
     audioService.stop();
+    limparCampos();
     setAba(novaAba);
     setModoCadastro(false);
-    setErro(null);
   };
 
   const ouvirInstrucoes = () => {
@@ -112,6 +123,27 @@ export const TelaLogin: React.FC<TelaLoginProps> = ({
         }
       } else {
         await authService.entrarComEmail(email, senha);
+      }
+
+      const perfilLogado = await authService.obterPerfil();
+      if (!perfilLogado) {
+        await authService.sair();
+        throw new Error('Perfil não encontrado para esta conta.');
+      }
+
+      if (perfilLogado.role !== aba) {
+        await authService.sair();
+        if (aba === 'admin') {
+          throw new Error(
+            'Esta conta não tem permissão de Coordenação (Admin). Se ela é de familiar, entre pela aba Familiar / Cuidador.'
+          );
+        }
+        if (aba === 'family') {
+          throw new Error(
+            'Esta conta não é de Familiar / Cuidador. Entre pela aba correspondente ao seu perfil.'
+          );
+        }
+        throw new Error('Esta conta não é de Participante. Entre pela aba correspondente ao seu perfil.');
       }
 
       await onAuthSuccess();
@@ -213,13 +245,18 @@ export const TelaLogin: React.FC<TelaLoginProps> = ({
       </div>
 
       {/* Formulário da aba ativa */}
-      <form onSubmit={handleSubmit} className={`p-5 sm:p-6 rounded-3xl space-y-4 ${cardBg}`}>
+      <form
+        key={`${aba}-${modoCadastro ? 'cadastro' : 'login'}`}
+        onSubmit={handleSubmit}
+        autoComplete="off"
+        className={`p-5 sm:p-6 rounded-3xl space-y-4 ${cardBg}`}
+      >
         {/* Alternador Entrar / Cadastrar (só para Idoso e Familiar) */}
         {aba !== 'admin' ? (
           <div className="flex rounded-2xl p-1 bg-slate-100 dark:bg-zinc-800 gap-1">
             <button
               type="button"
-              onClick={() => { setModoCadastro(false); setErro(null); }}
+              onClick={() => { setModoCadastro(false); limparCampos(); }}
               className={`flex-1 py-2.5 rounded-xl font-black text-sm transition-all ${
                 !modoCadastro
                   ? 'bg-white text-slate-900 shadow'
@@ -230,7 +267,7 @@ export const TelaLogin: React.FC<TelaLoginProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => { setModoCadastro(true); setErro(null); }}
+              onClick={() => { setModoCadastro(true); limparCampos(); }}
               className={`flex-1 py-2.5 rounded-xl font-black text-sm transition-all ${
                 modoCadastro
                   ? 'bg-white text-slate-900 shadow'
@@ -287,8 +324,11 @@ export const TelaLogin: React.FC<TelaLoginProps> = ({
                 <span>Número do seu Celular (com DDD):</span>
               </label>
               <input
+                id={`phone-${aba}`}
+                name={`phone-${aba}`}
                 type="tel"
                 inputMode="tel"
+                autoComplete="off"
                 value={telefoneIdoso}
                 onChange={(e) => setTelefoneIdoso(e.target.value)}
                 placeholder="Ex.: (65) 99999-9999"
@@ -303,10 +343,13 @@ export const TelaLogin: React.FC<TelaLoginProps> = ({
                 <span>{modoCadastro ? 'Escolha um PIN de 4 números:' : 'Seu PIN de 4 números:'}</span>
               </label>
               <input
+                id={`pin-${aba}`}
+                name={`pin-${aba}`}
                 type="password"
                 inputMode="numeric"
                 pattern="\d{4}"
                 maxLength={4}
+                autoComplete="off"
                 value={pinIdoso}
                 onChange={(e) => setPinIdoso(formatarPin(e.target.value))}
                 placeholder="••••"
@@ -352,7 +395,10 @@ export const TelaLogin: React.FC<TelaLoginProps> = ({
                 <span>E-mail:</span>
               </label>
               <input
+                id={`email-${aba}`}
+                name={`email-${aba}`}
                 type="email"
+                autoComplete="off"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="seu.email@exemplo.com"
@@ -367,7 +413,10 @@ export const TelaLogin: React.FC<TelaLoginProps> = ({
                 <span>Senha:</span>
               </label>
               <input
+                id={`password-${aba}`}
+                name={`password-${aba}`}
                 type="password"
+                autoComplete={modoCadastro ? 'new-password' : 'off'}
                 value={senha}
                 onChange={(e) => setSenha(e.target.value)}
                 placeholder={modoCadastro ? 'Mínimo 8 caracteres' : 'Digite sua senha'}

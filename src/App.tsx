@@ -138,8 +138,6 @@ export const App: React.FC = () => {
         setSelectedScenario(null);
         setCurrentView('catalog');
         setCarregandoAuth(false);
-      } else if (event === 'SIGNED_IN') {
-        carregarSessao();
       }
     });
     return () => subscription.unsubscribe();
