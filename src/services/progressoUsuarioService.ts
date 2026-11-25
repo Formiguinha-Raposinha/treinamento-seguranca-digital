@@ -26,14 +26,36 @@ const STORAGE_KEY = 'antigravity_user_progress_v1';
 
 export class UserProgressService {
   private progress: UserProgressData;
+  private storageKey: string = STORAGE_KEY;
 
   constructor() {
     this.progress = this.loadFromStorage();
   }
 
+  /** Separa o progresso por usuário logado (cada idoso tem o seu no mesmo aparelho) */
+  public usarUsuario(userId: string | null): void {
+    this.storageKey = userId ? `${STORAGE_KEY}_${userId}` : STORAGE_KEY;
+    this.progress = this.loadFromStorage();
+  }
+
+  /** Remonta o progresso a partir dos treinos salvos na nuvem (ex.: celular novo) */
+  public reconstruirDeSessoes(
+    sessoes: { scenarioId: string; scenarioTitle: string; category: string; outcome: string; reason: string; completedAt: string }[]
+  ): void {
+    this.progress.results = {};
+    [...sessoes]
+      .sort((a, b) => new Date(a.completedAt).getTime() - new Date(b.completedAt).getTime())
+      .forEach(s => {
+        if (s.outcome === 'safe' || s.outcome === 'fallen') {
+          this.recordAttempt(s.scenarioId, s.scenarioTitle, s.category, s.outcome, s.reason);
+        }
+      });
+    this.saveToStorage();
+  }
+
   private loadFromStorage(): UserProgressData {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const saved = localStorage.getItem(this.storageKey);
       if (saved) {
         return JSON.parse(saved);
       }
@@ -52,7 +74,7 @@ export class UserProgressService {
 
   private saveToStorage(): void {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.progress));
+      localStorage.setItem(this.storageKey, JSON.stringify(this.progress));
     } catch (e) {
       console.warn('Erro ao salvar progresso:', e);
     }

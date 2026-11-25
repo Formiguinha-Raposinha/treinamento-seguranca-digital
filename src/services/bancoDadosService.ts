@@ -6,6 +6,7 @@ import {
   FamilyVulnerabilityReport,
   CategoriaPalavraPtBr
 } from '../types/bancoDados';
+import { nuvemService } from './nuvemService';
 
 // ---------- Feedback type ----------
 export type Feedback = {
@@ -288,9 +289,14 @@ class BancoDadosService {
   // GESTÃO DE SESSÕES DE SIMULAÇÃO (SESSIONS)
   // =========================================================================
 
-  public async addSession(session: SimulationSession): Promise<void> {
+  public async addSession(session: SimulationSession, opcoes: { sincronizar?: boolean } = {}): Promise<void> {
     this.memoryFallback.sessions[session.id] = session;
     this.persistFallback();
+
+    // Envia para a nuvem (só acontece se houver idoso logado)
+    if (opcoes.sincronizar !== false) {
+      nuvemService.enviarSessao(session).catch(() => undefined);
+    }
 
     if (!this.db) return;
 
@@ -342,7 +348,10 @@ class BancoDadosService {
   // GESTÃO DE PALAVRAS E EXPRESSÕES NÃO RECONHECIDAS (PT-BR)
   // =========================================================================
 
-  public async logUnrecognizedExpression(entry: Omit<UnrecognizedExpression, 'idioma'> & { idioma?: 'pt-BR' }): Promise<void> {
+  public async logUnrecognizedExpression(
+    entry: Omit<UnrecognizedExpression, 'idioma'> & { idioma?: 'pt-BR' },
+    opcoes: { sincronizar?: boolean } = {}
+  ): Promise<void> {
     const fullEntry: UnrecognizedExpression = {
       ...entry,
       idioma: 'pt-BR'
@@ -350,6 +359,10 @@ class BancoDadosService {
 
     this.memoryFallback.unrecognized[fullEntry.id] = fullEntry;
     this.persistFallback();
+
+    if (opcoes.sincronizar !== false) {
+      nuvemService.enviarExpressao(fullEntry).catch(() => undefined);
+    }
 
     if (!this.db) return;
 
@@ -739,10 +752,10 @@ class BancoDadosService {
   // =========================================================================
 
   public async addFeedback(feedback: Feedback): Promise<void> {
-    if (!this.db) {
-      console.warn('IndexedDB indisponível; feedback não persistido.');
-      return;
-    }
+    // Nuvem primeiro: é de lá que familiares e coordenação leem
+    await nuvemService.enviarFeedback(feedback);
+
+    if (!this.db) return;
     const db = this.db;
     return new Promise((resolve) => {
       try {
