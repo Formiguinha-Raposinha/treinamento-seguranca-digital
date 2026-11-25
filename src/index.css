@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  }
+}
+
+/* Modo alto contraste */
+.high-contrast {
+  --tw-bg-opacity: 1;
+  background-color: #000000 !important;
+  color: #FFFFFF !important;
+}
+
+.high-contrast button {
+  border: 2px solid #FFFFFF !important;
+}
+
+/* Suporte de Impressão de Alta Qualidade para Certificados e Relatórios */
+@media print {
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* Ocultar barra superior de acessibilidade e botões interativos na impressão */
+  header, nav, .print\\:hidden {
+    display: none !important;
+  }
+
+  @page {
+    margin: 1.5cm;
+  }
+}

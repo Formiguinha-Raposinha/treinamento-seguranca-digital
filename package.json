@@ -1,0 +1,31 @@
+{
+  "name": "projeto-extensao-seguranca-digital",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev_with_sync.js",
+    "dev:only": "vite",
+    "build": "tsc && vite build",
+    "build:sync": "tsc && vite build && npm run backup",
+    "preview": "vite preview",
+    "backup": "powershell -ExecutionPolicy Bypass -File scripts/sync_folders.ps1 -Direction ToCloud",
+    "restore": "powershell -ExecutionPolicy Bypass -File scripts/sync_folders.ps1 -Direction FromCloud",
+    "sync:watch": "node scripts/sync_watch.js"
+  },
+  "dependencies": {
+    "lucide-react": "^0.475.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "~5.6.2",
+    "vite": "^6.0.7"
+  }
+}

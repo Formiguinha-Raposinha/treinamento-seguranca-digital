@@ -1,0 +1,10 @@
+node_modules
+dist
+.vscode/edge-debug-profile
+.env
+.env.*
+!.env.example
+*.log
+.tmp.driveupload/
+.tmp.drivedownload/
+📋 Histórico do Projeto e Guia de Continuidade.docx
