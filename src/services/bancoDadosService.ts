@@ -7,13 +7,28 @@ import {
   CategoriaPalavraPtBr
 } from '../types/bancoDados';
 
+// ---------- Feedback type ----------
+export type Feedback = {
+  id?: number;
+  participantId: string; // id do idoso
+  author: 'senior' | 'family';
+  scenarioId?: string;
+  scenarioTitle?: string;
+  category?: 'ocorrido' | 'dificuldade' | 'sugestao' | 'outro';
+  rating?: number; // 1-5 opcional
+  comment: string;
+  audioBlob?: Blob;
+  date: string; // ISO
+};
+
 const DB_NAME = 'SegurancaDigitalIdososDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 const STORE_SENIORS = 'seniors';
 const STORE_SESSIONS = 'simulation_sessions';
 const STORE_UNRECOGNIZED = 'unrecognized_expressions';
 const STORE_WORDS = 'word_frequencies';
+const STORE_FEEDBACK = 'feedback';
 
 const STORAGE_ACTIVE_SENIOR_KEY = 'seguranca_digital_active_senior_id';
 
@@ -103,6 +118,13 @@ class BancoDadosService {
 
           if (!db.objectStoreNames.contains(STORE_WORDS)) {
             db.createObjectStore(STORE_WORDS, { keyPath: 'word' });
+          }
+
+          // Feedback do idoso e do familiar (texto + áudio)
+          if (!db.objectStoreNames.contains(STORE_FEEDBACK)) {
+            const fbStore = db.createObjectStore(STORE_FEEDBACK, { keyPath: 'id', autoIncrement: true });
+            fbStore.createIndex('by-participant', 'participantId', { unique: false });
+            fbStore.createIndex('by-author', 'author', { unique: false });
           }
         };
 
@@ -710,6 +732,58 @@ class BancoDadosService {
       console.error('Erro ao importar banco:', err);
       return false;
     }
+  }
+
+  // =========================================================================
+  // FEEDBACK (IDOSO E FAMILIAR)
+  // =========================================================================
+
+  public async addFeedback(feedback: Feedback): Promise<void> {
+    if (!this.db) {
+      console.warn('IndexedDB indisponível; feedback não persistido.');
+      return;
+    }
+    const db = this.db;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORE_FEEDBACK, 'readwrite');
+        tx.objectStore(STORE_FEEDBACK).add(feedback);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      } catch {
+        resolve();
+      }
+    });
+  }
+
+  public async getFeedbackByParticipant(participantId: string): Promise<Feedback[]> {
+    if (!this.db) return [];
+    const db = this.db;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORE_FEEDBACK, 'readonly');
+        const req = tx.objectStore(STORE_FEEDBACK).index('by-participant').getAll(participantId);
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => resolve([]);
+      } catch {
+        resolve([]);
+      }
+    });
+  }
+
+  public async getAllFeedback(): Promise<Feedback[]> {
+    if (!this.db) return [];
+    const db = this.db;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORE_FEEDBACK, 'readonly');
+        const req = tx.objectStore(STORE_FEEDBACK).getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => resolve([]);
+      } catch {
+        resolve([]);
+      }
+    });
   }
 }
 

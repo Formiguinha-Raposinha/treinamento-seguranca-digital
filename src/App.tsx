@@ -5,6 +5,7 @@ import { DicionarioExpressoes } from './components/dicionario/DicionarioExpresso
 import { PainelEvolucaoIdoso } from './components/evolucao/PainelEvolucaoIdoso';
 import { ModalCertificado } from './components/certificado/ModalCertificado';
 import { PortalVulnerabilidadeFamilia } from './components/familia/PortalVulnerabilidadeFamilia';
+import { FeedbackModal } from './components/FeedbackModal';
 import { ModalIdentificacaoIdoso } from './components/autenticacao/ModalIdentificacaoIdoso';
 import { bancoDadosService } from './services/bancoDadosService';
 import { progressoUsuarioService } from './services/progressoUsuarioService';
@@ -38,6 +39,7 @@ export const App: React.FC = () => {
   const [showCertificateModal, setShowCertificateModal] = useState<boolean>(false);
   const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
   const [activeSenior, setActiveSenior] = useState<SeniorClient | null>(null);
+  const [feedbackScenario, setFeedbackScenario] = useState<{ id: string; title: string } | null>(null);
   const [fontSizeLevel, setFontSizeLevel] = useState<number>(1); // Padrão: Grande para facilitar leitura
   const [highContrast, setHighContrast] = useState<boolean>(false);
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
@@ -97,6 +99,8 @@ export const App: React.FC = () => {
             scenario={selectedScenario}
             onBack={() => {
               audioService.stop();
+              // Ao final de cada treino, pede o feedback do idoso
+              setFeedbackScenario({ id: selectedScenario.id, title: selectedScenario.title });
               setSelectedScenario(null);
             }}
             onViewCertificate={() => setShowCertificateModal(true)}
@@ -534,6 +538,17 @@ export const App: React.FC = () => {
         }}
         highContrast={highContrast}
         fontSizeLevel={fontSizeLevel}
+      />
+
+      {/* Feedback do idoso ao final de cada treino (texto ou áudio) */}
+      <FeedbackModal
+        isOpen={!!feedbackScenario && !!activeSenior}
+        participantId={activeSenior?.id || ''}
+        author="senior"
+        scenarioId={feedbackScenario?.id}
+        scenarioTitle={feedbackScenario?.title}
+        highContrast={highContrast}
+        onClose={() => setFeedbackScenario(null)}
       />
     </div>
   );

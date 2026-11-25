@@ -1,4 +1,8 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
+import { dbService, Feedback } from '../../services/bancoDadosService';
+import { SeniorClient, FamilyVulnerabilityReport, SimulationSession } from '../../types/bancoDados';
+import { audioService } from '../../services/audioService';
+import { FeedbackModal } from '../FeedbackModal';
 import { 
   ArrowLeft, 
   ShieldCheck, 
@@ -11,11 +15,9 @@ import {
   Plus, 
   Sparkles, 
   FileText, 
-  UserCheck 
+  UserCheck,
+  MessageSquareWarning
 } from 'lucide-react';
-import { dbService } from '../../services/bancoDadosService';
-import { SeniorClient, FamilyVulnerabilityReport, SimulationSession } from '../../types/bancoDados';
-import { audioService } from '../../services/audioService';
 
 interface FamilyVulnerabilityPortalProps {
   onBack: () => void;
@@ -34,6 +36,26 @@ export const FamilyVulnerabilityPortal: React.FC<FamilyVulnerabilityPortalProps>
   const [sessions, setSessions] = useState<SimulationSession[]>([]);
   const [isEditingSenior, setIsEditingSenior] = useState<boolean>(false);
   const [isAddingSenior, setIsAddingSenior] = useState<boolean>(false);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
+  const [audioUrls, setAudioUrls] = useState<Record<number, string>>({});
+
+  const loadFeedbacks = async (seniorId: string) => {
+    const list = await dbService.getFeedbackByParticipant(seniorId);
+    list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    setFeedbacks(list);
+  };
+
+  // Gera URLs de reprodução para os áudios gravados
+  useEffect(() => {
+    const urls: Record<number, string> = {};
+    feedbacks.forEach(f => {
+      if (f.id !== undefined && f.audioBlob) urls[f.id] = URL.createObjectURL(f.audioBlob);
+    });
+    setAudioUrls(urls);
+    return () => Object.values(urls).forEach(u => URL.revokeObjectURL(u));
+  }, [feedbacks]);
+
 
   // Form states
   const [editName, setEditName] = useState('');
@@ -62,6 +84,7 @@ export const FamilyVulnerabilityPortal: React.FC<FamilyVulnerabilityPortalProps>
 
       const sessList = await dbService.getSessions(active.id);
       setSessions(sessList.sort((a, b) => new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime()));
+      await loadFeedbacks(active.id);
     }
   };
 
@@ -184,6 +207,15 @@ export const FamilyVulnerabilityPortal: React.FC<FamilyVulnerabilityPortalProps>
           >
             <Volume2 className="w-4 h-4 text-purple-600" />
             <span>Ouvir Relatório</span>
+          </button>
+
+          <button
+            onClick={() => setShowFeedback(true)}
+            className="px-3.5 py-2 rounded-xl font-bold text-xs sm:text-sm bg-amber-500 hover:bg-amber-600 text-white flex items-center gap-1.5 shadow-sm active:scale-95 transition-all"
+            title="Relatar algo que aconteceu ou enviar sugestão"
+          >
+            <MessageSquareWarning className="w-4 h-4" />
+            <span>Relatar Ocorrido / Feedback</span>
           </button>
 
           <button
@@ -596,6 +628,61 @@ export const FamilyVulnerabilityPortal: React.FC<FamilyVulnerabilityPortalProps>
           </div>
         )}
       </div>
+
+      {/* Histórico de relatos e feedbacks (familiar e idoso) */}
+      <div className={`rounded-3xl border p-5 space-y-3 print:hidden ${
+        highContrast ? 'border-yellow-400' : 'bg-white border-slate-200 shadow-sm'
+      }`}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-black flex items-center gap-2">
+            <MessageSquareWarning className="w-5 h-5 text-amber-600" />
+            Relatos e Feedbacks
+          </h2>
+          <button
+            onClick={() => setShowFeedback(true)}
+            className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-black flex items-center gap-1"
+          >
+            <Plus className="w-3.5 h-3.5" /> Novo relato
+          </button>
+        </div>
+        <p className="text-xs text-slate-500">
+          Use este espaço quando {activeSenior.name} não conseguir explicar o que aconteceu: descreva tentativas de golpe,
+          dificuldades no treino ou sugestões. Você pode escrever ou gravar um áudio.
+        </p>
+
+        {feedbacks.length === 0 ? (
+          <p className="text-sm text-slate-500 italic">Nenhum relato registrado ainda.</p>
+        ) : (
+          <ul className="space-y-2">
+            {feedbacks.map(f => (
+              <li key={f.id} className={`rounded-2xl border p-3 text-sm space-y-1.5 ${
+                highContrast ? 'border-yellow-400' : f.author === 'family' ? 'bg-amber-50 border-amber-200' : 'bg-purple-50 border-purple-200'
+              }`}>
+                <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
+                  <span className={`px-2 py-0.5 rounded-full ${f.author === 'family' ? 'bg-amber-200 text-amber-900' : 'bg-purple-200 text-purple-900'}`}>
+                    {f.author === 'family' ? 'Familiar' : 'Idoso'}
+                  </span>
+                  {f.category && <span className="text-slate-600">{({ ocorrido: 'Ocorrido', dificuldade: 'Dificuldade', sugestao: 'Sugestão', outro: 'Outro' } as const)[f.category]}</span>}
+                  {f.scenarioTitle && <span className="text-slate-600">• {f.scenarioTitle}</span>}
+                  {f.rating !== undefined && <span>{f.rating >= 5 ? '😄' : f.rating >= 3 ? '😐' : '😟'}</span>}
+                  <span className="ml-auto text-slate-500 font-normal">{new Date(f.date).toLocaleString('pt-BR')}</span>
+                </div>
+                {f.comment && <p className="whitespace-pre-wrap">{f.comment}</p>}
+                {f.id !== undefined && audioUrls[f.id] && <audio controls src={audioUrls[f.id]} className="w-full" />}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <FeedbackModal
+        isOpen={showFeedback}
+        participantId={activeSenior.id}
+        author="family"
+        highContrast={highContrast}
+        onClose={() => setShowFeedback(false)}
+        onSaved={() => loadFeedbacks(activeSenior.id)}
+      />
     </div>
   );
 };
