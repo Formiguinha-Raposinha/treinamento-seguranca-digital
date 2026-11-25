@@ -2,6 +2,8 @@
 import { dbService, Feedback } from '../../services/bancoDadosService';
 import { SeniorClient, FamilyVulnerabilityReport, SimulationSession } from '../../types/bancoDados';
 import { audioService } from '../../services/audioService';
+import { authService, Perfil } from '../../services/authService';
+import { nuvemService } from '../../services/nuvemService';
 import { FeedbackModal } from '../FeedbackModal';
 import { 
   ArrowLeft, 
@@ -16,20 +18,31 @@ import {
   Sparkles, 
   FileText, 
   UserCheck,
-  MessageSquareWarning
+  MessageSquareWarning,
+  LogOut,
+  Link2,
+  Loader2
 } from 'lucide-react';
 
 interface FamilyVulnerabilityPortalProps {
   onBack: () => void;
   highContrast: boolean;
   fontSizeLevel: number;
+  perfil?: Perfil | null;
+  isStandaloneRole?: boolean;
+  onLogout?: () => void;
 }
 
 export const FamilyVulnerabilityPortal: React.FC<FamilyVulnerabilityPortalProps> = ({
   onBack,
   highContrast,
-  fontSizeLevel
+  fontSizeLevel,
+  perfil = null,
+  isStandaloneRole = false,
+  onLogout
 }) => {
+  const modoNuvem = perfil?.role === 'family';
+
   const [seniors, setSeniors] = useState<SeniorClient[]>([]);
   const [activeSenior, setActiveSenior] = useState<SeniorClient | null>(null);
   const [report, setReport] = useState<FamilyVulnerabilityReport | null>(null);
@@ -39,22 +52,59 @@ export const FamilyVulnerabilityPortal: React.FC<FamilyVulnerabilityPortalProps>
   const [showFeedback, setShowFeedback] = useState(false);
   const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
   const [audioUrls, setAudioUrls] = useState<Record<number, string>>({});
+  const [carregandoDados, setCarregandoDados] = useState<boolean>(true);
+
+  // Estado de vínculo por código (modo nuvem)
+  const [codigoConvite, setCodigoConvite] = useState('');
+  const [parentescoConvite, setParentescoConvite] = useState<'filho(a)' | 'neto(a)' | 'cônjuge' | 'cuidador(a)' | 'outro'>('filho(a)');
+  const [vinculando, setVinculando] = useState(false);
+  const [erroVinculo, setErroVinculo] = useState<string | null>(null);
+  const [sucessoVinculo, setSucessoVinculo] = useState<string | null>(null);
 
   const loadFeedbacks = async (seniorId: string) => {
+    if (modoNuvem) {
+      const fbsNuvem = await nuvemService.listarFeedbacks(seniorId);
+      const convertidos: Feedback[] = fbsNuvem.map(f => ({
+        id: f.id,
+        participantId: f.senior_id,
+        author: f.author_role,
+        scenarioId: f.scenario_id || undefined,
+        scenarioTitle: f.scenario_title || undefined,
+        category: f.category || undefined,
+        rating: f.rating ?? undefined,
+        comment: f.comment,
+        date: f.created_at
+      }));
+      setFeedbacks(convertidos);
+
+      const entries = await Promise.all(
+        fbsNuvem
+          .filter(f => Boolean(f.audio_path))
+          .map(async f => [f.id, await nuvemService.urlDoAudio(f.audio_path!)] as const)
+      );
+      const urls: Record<number, string> = {};
+      entries.forEach(([id, url]) => {
+        if (url) urls[id] = url;
+      });
+      setAudioUrls(urls);
+      return;
+    }
+
     const list = await dbService.getFeedbackByParticipant(seniorId);
     list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     setFeedbacks(list);
   };
 
-  // Gera URLs de reprodução para os áudios gravados
+  // Gera URLs locais de reprodução somente quando não estiver no modo nuvem
   useEffect(() => {
+    if (modoNuvem) return;
     const urls: Record<number, string> = {};
     feedbacks.forEach(f => {
       if (f.id !== undefined && f.audioBlob) urls[f.id] = URL.createObjectURL(f.audioBlob);
     });
     setAudioUrls(urls);
     return () => Object.values(urls).forEach(u => URL.revokeObjectURL(u));
-  }, [feedbacks]);
+  }, [feedbacks, modoNuvem]);
 
 
   // Form states
@@ -65,32 +115,103 @@ export const FamilyVulnerabilityPortal: React.FC<FamilyVulnerabilityPortalProps>
   const [editCaregiverRelation, setEditCaregiverRelation] = useState<'filho(a)' | 'neto(a)' | 'cônjuge' | 'cuidador(a)' | 'outro'>('filho(a)');
 
   const loadData = async () => {
-    await dbService.init();
-    const allSeniors = await dbService.getSeniors();
-    setSeniors(allSeniors);
-    
-    const active = await dbService.getActiveSenior();
-    setActiveSenior(active);
-    
-    if (active) {
-      setEditName(active.name);
-      setEditAgeGroup(active.ageGroup);
-      setEditCaregiverName(active.caregiverName);
-      setEditCaregiverPhone(active.caregiverPhone);
-      setEditCaregiverRelation(active.caregiverRelationship);
+    setCarregandoDados(true);
+    try {
+      await dbService.init();
 
-      const rep = await dbService.generateFamilyReport(active.id);
-      setReport(rep);
+      if (modoNuvem && perfil) {
+        const vinculados = await authService.listarIdososVinculados();
+        if (vinculados.length === 0) {
+          setSeniors([]);
+          setActiveSenior(null);
+          setReport(null);
+          setSessions([]);
+          setFeedbacks([]);
+          return;
+        }
 
-      const sessList = await dbService.getSessions(active.id);
-      setSessions(sessList.sort((a, b) => new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime()));
-      await loadFeedbacks(active.id);
+        const mappedSeniors: SeniorClient[] = vinculados.map(v => ({
+          id: v.id,
+          name: v.name || 'Participante',
+          ageGroup: v.age_group || '70-79',
+          phone: v.phone || undefined,
+          caregiverName: perfil.name || 'Familiar',
+          caregiverPhone: perfil.phone || '',
+          caregiverRelationship: (v.relationship as SeniorClient['caregiverRelationship']) || 'filho(a)',
+          riskLevel: 'moderado',
+          createdAt: perfil.created_at,
+          updatedAt: new Date().toISOString()
+        }));
+
+        setSeniors(mappedSeniors);
+
+        const currentActiveId = dbService.getActiveSeniorId();
+        const active = mappedSeniors.find(s => s.id === currentActiveId) || mappedSeniors[0];
+        dbService.setActiveSeniorId(active.id);
+        await dbService.saveSenior(active);
+        setActiveSenior(active);
+
+        const sessNuvem = await nuvemService.baixarSessoes(active.id);
+        for (const sess of sessNuvem) {
+          await dbService.addSession(sess, { sincronizar: false });
+        }
+
+        const rep = await dbService.generateFamilyReport(active.id);
+        setReport(rep);
+
+        const sessList = await dbService.getSessions(active.id);
+        setSessions(sessList.sort((a, b) => new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime()));
+        await loadFeedbacks(active.id);
+        return;
+      }
+
+      const allSeniors = await dbService.getSeniors();
+      setSeniors(allSeniors);
+
+      const active = await dbService.getActiveSenior();
+      setActiveSenior(active);
+
+      if (active) {
+        setEditName(active.name);
+        setEditAgeGroup(active.ageGroup);
+        setEditCaregiverName(active.caregiverName);
+        setEditCaregiverPhone(active.caregiverPhone);
+        setEditCaregiverRelation(active.caregiverRelationship);
+
+        const rep = await dbService.generateFamilyReport(active.id);
+        setReport(rep);
+
+        const sessList = await dbService.getSessions(active.id);
+        setSessions(sessList.sort((a, b) => new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime()));
+        await loadFeedbacks(active.id);
+      }
+    } finally {
+      setCarregandoDados(false);
     }
   };
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [perfil?.id]);
+
+  const handleVincularPorCodigo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!codigoConvite.trim()) return;
+    setVinculando(true);
+    setErroVinculo(null);
+    setSucessoVinculo(null);
+    try {
+      const res = await authService.vincularIdoso(codigoConvite, parentescoConvite);
+      dbService.setActiveSeniorId(res.senior_id);
+      setCodigoConvite('');
+      setSucessoVinculo(`Vínculo feito com sucesso com ${res.senior_name || 'o participante'}!`);
+      await loadData();
+    } catch (err: any) {
+      setErroVinculo(err?.message || 'Não foi possível vincular com esse código.');
+    } finally {
+      setVinculando(false);
+    }
+  };
 
   const handleSelectSenior = async (id: string) => {
     dbService.setActiveSeniorId(id);
@@ -149,6 +270,101 @@ export const FamilyVulnerabilityPortal: React.FC<FamilyVulnerabilityPortalProps>
     'text-lg'
   ][fontSizeLevel] || 'text-base';
 
+  if (carregandoDados) {
+    return (
+      <div className="max-w-4xl mx-auto p-6 text-center space-y-4">
+        <Loader2 className="w-8 h-8 animate-spin mx-auto text-purple-600" />
+        <p className="text-slate-600">Carregando painel da família...</p>
+      </div>
+    );
+  }
+
+  if (modoNuvem && (!activeSenior || !report)) {
+    return (
+      <div className={`max-w-2xl w-full mx-auto p-4 sm:p-6 space-y-6 ${fontSizeClasses} ${
+        highContrast ? 'text-white' : 'text-slate-900'
+      }`}>
+        <div className="flex items-center justify-between gap-3 pb-4 border-b">
+          <div className="flex items-center gap-2">
+            <HeartHandshake className="w-6 h-6 text-purple-700" />
+            <div>
+              <h1 className="text-xl sm:text-2xl font-black">Portal da Família</h1>
+              <p className="text-xs opacity-75">Olá, {perfil?.name || 'Familiar'}</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={isStandaloneRole && onLogout ? onLogout : onBack}
+            className="px-3.5 py-2 rounded-xl font-black text-xs sm:text-sm bg-red-600 hover:bg-red-700 text-white flex items-center gap-1.5"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>{isStandaloneRole ? 'Sair' : 'Voltar'}</span>
+          </button>
+        </div>
+
+        <form onSubmit={handleVincularPorCodigo} className={`p-6 rounded-3xl border-2 space-y-4 ${
+          highContrast ? 'bg-zinc-900 border-yellow-400' : 'bg-white border-purple-200 shadow-lg'
+        }`}>
+          <div className="flex items-start gap-3">
+            <div className="p-3 rounded-2xl bg-purple-100 text-purple-800 shrink-0">
+              <Link2 className="w-6 h-6" />
+            </div>
+            <div>
+              <h2 className="text-lg font-black">Vincular seu familiar idoso</h2>
+              <p className="text-sm opacity-80">
+                Peça o <strong>código de convite</strong> que aparece na tela inicial do app no celular do idoso (ex.: <code>FAM-7K2P-9X4M</code>).
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block font-bold text-xs mb-1">Código de convite:</label>
+              <input
+                type="text"
+                value={codigoConvite}
+                onChange={(e) => setCodigoConvite(e.target.value.toUpperCase())}
+                placeholder="FAM-XXXX-XXXX"
+                required
+                className="w-full px-3.5 py-2.5 rounded-xl border-2 border-purple-300 bg-white text-slate-900 font-black tracking-widest uppercase"
+              />
+            </div>
+
+            <div>
+              <label className="block font-bold text-xs mb-1">Seu grau de parentesco:</label>
+              <select
+                value={parentescoConvite}
+                onChange={(e) => setParentescoConvite(e.target.value as any)}
+                className="w-full px-3.5 py-2.5 rounded-xl border-2 border-slate-300 bg-white text-slate-900 font-bold"
+              >
+                <option value="filho(a)">Filho(a)</option>
+                <option value="neto(a)">Neto(a)</option>
+                <option value="cônjuge">Cônjuge</option>
+                <option value="cuidador(a)">Cuidador(a)</option>
+                <option value="outro">Outro</option>
+              </select>
+            </div>
+          </div>
+
+          {erroVinculo && (
+            <div className="p-3 rounded-xl bg-red-50 border border-red-300 text-red-900 text-xs font-bold">
+              {erroVinculo}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={vinculando}
+            className="w-full py-3 rounded-2xl bg-purple-700 hover:bg-purple-800 disabled:opacity-50 text-white font-black flex items-center justify-center gap-2"
+          >
+            {vinculando ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
+            <span>{vinculando ? 'Vinculando...' : 'Vincular e Ver Relatório'}</span>
+          </button>
+        </form>
+      </div>
+    );
+  }
+
   if (!activeSenior || !report) {
     return (
       <div className="max-w-4xl mx-auto p-6 text-center space-y-4">
@@ -170,17 +386,19 @@ export const FamilyVulnerabilityPortal: React.FC<FamilyVulnerabilityPortalProps>
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b print:hidden">
         <div className="flex items-center gap-3">
-          <button
-            onClick={onBack}
-            className={`p-2.5 rounded-2xl border transition-all active:scale-95 ${
-              highContrast 
-                ? 'bg-yellow-400 text-black border-yellow-300' 
-                : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300 shadow-sm'
-            }`}
-            title="Voltar"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
+          {!isStandaloneRole && (
+            <button
+              onClick={onBack}
+              className={`p-2.5 rounded-2xl border transition-all active:scale-95 ${
+                highContrast 
+                  ? 'bg-yellow-400 text-black border-yellow-300' 
+                  : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300 shadow-sm'
+              }`}
+              title="Voltar"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+          )}
           <div>
             <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-xs font-black bg-purple-100 text-purple-900 border border-purple-300 mb-1">
               <HeartHandshake className="w-3.5 h-3.5 text-purple-700" />
@@ -226,8 +444,61 @@ export const FamilyVulnerabilityPortal: React.FC<FamilyVulnerabilityPortalProps>
             <Printer className="w-4 h-4" />
             <span>Imprimir Laudo (PDF)</span>
           </button>
+
+          {isStandaloneRole && onLogout && (
+            <button
+              type="button"
+              onClick={onLogout}
+              className="px-3.5 py-2 rounded-xl font-black text-xs sm:text-sm bg-red-600 hover:bg-red-700 text-white flex items-center gap-1.5 shadow-sm active:scale-95 transition-all"
+            >
+              <LogOut className="w-4 h-4" />
+              <span>Sair</span>
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Formulário rápido para vincular outro idoso (modo nuvem) */}
+      {modoNuvem && (
+        <form onSubmit={handleVincularPorCodigo} className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-end gap-2.5 print:hidden ${
+          highContrast ? 'bg-zinc-900 border-yellow-400' : 'bg-purple-50/70 border-purple-200'
+        }`}>
+          <div className="flex-1">
+            <label className="block text-xs font-black mb-1">Acompanhar outro idoso por código:</label>
+            <input
+              type="text"
+              value={codigoConvite}
+              onChange={(e) => setCodigoConvite(e.target.value.toUpperCase())}
+              placeholder="FAM-XXXX-XXXX"
+              className="w-full px-3 py-1.5 rounded-xl border border-purple-300 bg-white text-slate-900 text-xs font-black tracking-wider uppercase"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-black mb-1">Parentesco:</label>
+            <select
+              value={parentescoConvite}
+              onChange={(e) => setParentescoConvite(e.target.value as any)}
+              className="w-full px-3 py-1.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-xs font-bold"
+            >
+              <option value="filho(a)">Filho(a)</option>
+              <option value="neto(a)">Neto(a)</option>
+              <option value="cônjuge">Cônjuge</option>
+              <option value="cuidador(a)">Cuidador(a)</option>
+              <option value="outro">Outro</option>
+            </select>
+          </div>
+          <button
+            type="submit"
+            disabled={vinculando || !codigoConvite.trim()}
+            className="px-4 py-2 rounded-xl bg-purple-700 hover:bg-purple-800 disabled:opacity-50 text-white font-black text-xs flex items-center justify-center gap-1.5 shrink-0"
+          >
+            <Link2 className="w-3.5 h-3.5" />
+            <span>{vinculando ? 'Vinculando...' : 'Vincular'}</span>
+          </button>
+          {erroVinculo && <p className="text-xs font-bold text-red-600">{erroVinculo}</p>}
+          {sucessoVinculo && <p className="text-xs font-bold text-emerald-700">{sucessoVinculo}</p>}
+        </form>
+      )}
 
       {/* Cabeçalho de Impressão Oficial */}
       <div className="hidden print:block border-b-2 border-slate-900 pb-4 mb-4">
@@ -276,30 +547,34 @@ export const FamilyVulnerabilityPortal: React.FC<FamilyVulnerabilityPortalProps>
               </select>
             )}
 
-            <button
-              onClick={() => {
-                setIsEditingSenior(true);
-                setIsAddingSenior(false);
-              }}
-              className="px-3 py-1.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-xs font-extrabold text-slate-700 shadow-sm"
-            >
-              Editar Dados
-            </button>
+            {!modoNuvem && (
+              <>
+                <button
+                  onClick={() => {
+                    setIsEditingSenior(true);
+                    setIsAddingSenior(false);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-xs font-extrabold text-slate-700 shadow-sm"
+                >
+                  Editar Dados
+                </button>
 
-            <button
-              onClick={() => {
-                setEditName('');
-                setEditAgeGroup('70-79');
-                setEditCaregiverName('');
-                setEditCaregiverPhone('');
-                setIsAddingSenior(true);
-                setIsEditingSenior(false);
-              }}
-              className="px-3 py-1.5 rounded-xl bg-purple-100 border border-purple-300 hover:bg-purple-200 text-xs font-black text-purple-900 flex items-center gap-1 shadow-sm"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Novo Idoso</span>
-            </button>
+                <button
+                  onClick={() => {
+                    setEditName('');
+                    setEditAgeGroup('70-79');
+                    setEditCaregiverName('');
+                    setEditCaregiverPhone('');
+                    setIsAddingSenior(true);
+                    setIsEditingSenior(false);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-purple-100 border border-purple-300 hover:bg-purple-200 text-xs font-black text-purple-900 flex items-center gap-1 shadow-sm"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Novo Idoso</span>
+                </button>
+              </>
+            )}
           </div>
         </div>
 

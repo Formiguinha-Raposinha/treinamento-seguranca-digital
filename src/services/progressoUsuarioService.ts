@@ -246,6 +246,22 @@ export class UserProgressService {
     };
     this.saveToStorage();
   }
+
+  public limparUsuarioAtual(): void {
+    try {
+      localStorage.removeItem(this.storageKey);
+    } catch {
+      // Ignora
+    }
+    this.storageKey = STORAGE_KEY;
+    this.progress = {
+      profile: {
+        name: 'Participante',
+        registeredAt: new Date().toISOString()
+      },
+      results: {}
+    };
+  }
 }
 
 export const userProgressService = new UserProgressService();

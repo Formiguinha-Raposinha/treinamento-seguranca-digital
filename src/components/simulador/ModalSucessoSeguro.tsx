@@ -1,8 +1,9 @@
-import React, { useEffect } from 'react';
-import { ShieldCheck, RotateCcw, Volume2, Award, Home, Sparkles, ArrowRight } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { ShieldCheck, RotateCcw, Volume2, Award, Home, Sparkles, ArrowRight, Users } from 'lucide-react';
 import { Scenario } from '../../types/cenario';
 import { audioService } from '../../services/audioService';
 import { progressoUsuarioService } from '../../services/progressoUsuarioService';
+import { nuvemService } from '../../services/nuvemService';
 
 interface SafeSuccessModalProps {
   scenario: Scenario;
@@ -29,6 +30,13 @@ export const SafeSuccessModal: React.FC<SafeSuccessModalProps> = ({
 }) => {
   const result = progressoUsuarioService.getResultForScenario(scenario.id);
   const isOvercome = result?.hasOvercomeError;
+  const [stats, setStats] = useState<{ total: number; safe_pct: number; fallen_pct: number } | null>(null);
+
+  useEffect(() => {
+    nuvemService.estatisticaCenario(scenario.id)
+      .then(s => { if (s) setStats(s); })
+      .catch(() => undefined);
+  }, [scenario.id]);
 
   useEffect(() => {
     const text = isOvercome
@@ -123,6 +131,18 @@ export const SafeSuccessModal: React.FC<SafeSuccessModalProps> = ({
               🛡️ <strong>Você praticou a atitude mais segura:</strong> parou antes de agir, desconfiou do contato e buscou confirmação pelo canal oficial.
             </p>
           </div>
+
+          {/* Comparação motivacional adaptativa (evita efeito reverso quando taxa de erro é baixa) */}
+          {stats && stats.total >= 5 && (
+            <div className="p-2.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-950 flex items-start gap-2">
+              <Users className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+              <p className="text-xs font-semibold leading-snug">
+                {stats.fallen_pct >= 15
+                  ? `${stats.fallen_pct}% das pessoas que praticaram este cenário caíram na armadilha — você se saiu muito bem!`
+                  : 'Excelente desempenho! Você dominou este golpe — continue praticando os próximos desafios para manter o reflexo em dia.'}
+              </p>
+            </div>
+          )}
 
           {/* Regra de Ouro Consolidada */}
           <div className="p-2.5 rounded-xl bg-slate-100 border border-slate-200 text-slate-800">

@@ -1,4 +1,6 @@
 import { supabase } from '../lib/supabase';
+import { dbService } from './bancoDadosService';
+import { progressoUsuarioService } from './progressoUsuarioService';
 
 export type PapelUsuario = 'senior' | 'family' | 'admin';
 
@@ -32,6 +34,25 @@ export const normalizarTelefone = (telefone: string): string => {
 const emailDoIdoso = (telefone: string) => `${normalizarTelefone(telefone)}@${DOMINIO_IDOSO}`;
 const senhaDoIdoso = (pin: string) => `sd-pin-${pin}`;
 
+const PINS_OBVIOS = new Set([
+  '1234', '4321', '0123', '3210', '1122', '1212', '0101', '1020',
+  '2020', '2021', '2022', '2023', '2024', '2025', '2026'
+]);
+
+export const validarPinIdoso = (pin: string, telefone: string): string | null => {
+  if (!/^\d{4}$/.test(pin)) {
+    return 'O PIN deve ter exatamente 4 números.';
+  }
+  if (/^(\d)\1{3}$/.test(pin) || PINS_OBVIOS.has(pin)) {
+    return 'Escolha um PIN menos óbvio (evite sequências como 1234, números repetidos ou o ano atual).';
+  }
+  const telDigitos = telefone.replace(/\D/g, '');
+  if (telDigitos.length >= 4 && pin === telDigitos.slice(-4)) {
+    return 'Por segurança, não use os 4 últimos números do seu celular como PIN.';
+  }
+  return null;
+};
+
 const traduzirErro = (mensagem: string): string => {
   const m = mensagem.toLowerCase();
   if (m.includes('invalid login credentials')) return 'Dados incorretos. Confira e tente de novo.';
@@ -59,6 +80,13 @@ const exigirSessao = (sessao: unknown) => {
 
 export const authService = {
   async cadastrarIdoso(dados: { nome: string; telefone: string; pin: string; faixaEtaria: string }) {
+    const telDigitos = dados.telefone.replace(/\D/g, '');
+    if (telDigitos.length < 10) {
+      throw new Error('Digite o número de celular completo com DDD (ex.: 65 99999-9999).');
+    }
+    const erroPin = validarPinIdoso(dados.pin, dados.telefone);
+    if (erroPin) throw new Error(erroPin);
+
     const { data, error } = await supabase.auth.signUp({
       email: emailDoIdoso(dados.telefone),
       password: senhaDoIdoso(dados.pin),
@@ -71,6 +99,9 @@ export const authService = {
   },
 
   async entrarIdoso(telefone: string, pin: string) {
+    if (!/^\d{4}$/.test(pin)) {
+      throw new Error('O PIN deve ter 4 números.');
+    }
     const { error } = await supabase.auth.signInWithPassword({
       email: emailDoIdoso(telefone),
       password: senhaDoIdoso(pin)
@@ -84,6 +115,9 @@ export const authService = {
   },
 
   async cadastrarFamiliar(dados: { nome: string; email: string; senha: string }) {
+    if (dados.senha.length < 8) {
+      throw new Error('Por segurança, a senha deve ter pelo menos 8 caracteres.');
+    }
     const { data, error } = await supabase.auth.signUp({
       email: dados.email.trim().toLowerCase(),
       password: dados.senha,
@@ -100,6 +134,14 @@ export const authService = {
 
   async sair() {
     await supabase.auth.signOut();
+    await dbService.limparCacheLocal();
+    progressoUsuarioService.limparUsuarioAtual();
+  },
+
+  async regenerarCodigoConvite(): Promise<string> {
+    const { data, error } = await supabase.rpc('regenerate_invite_code');
+    if (error) falhar(error);
+    return data as string;
   },
 
   async obterPerfil(): Promise<Perfil | null> {

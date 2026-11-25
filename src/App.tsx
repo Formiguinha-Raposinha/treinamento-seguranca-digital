@@ -7,6 +7,12 @@ import { ModalCertificado } from './components/certificado/ModalCertificado';
 import { PortalVulnerabilidadeFamilia } from './components/familia/PortalVulnerabilidadeFamilia';
 import { FeedbackModal } from './components/FeedbackModal';
 import { ModalIdentificacaoIdoso } from './components/autenticacao/ModalIdentificacaoIdoso';
+import { TelaLogin } from './components/autenticacao/TelaLogin';
+import { CardCodigoFamilia } from './components/autenticacao/CardCodigoFamilia';
+import { PainelAdmin } from './components/admin/PainelAdmin';
+import { supabase, supabaseConfigurado } from './lib/supabase';
+import { authService, Perfil } from './services/authService';
+import { nuvemService } from './services/nuvemService';
 import { bancoDadosService } from './services/bancoDadosService';
 import { progressoUsuarioService } from './services/progressoUsuarioService';
 import { availableScenarios } from './data/scenarios';
@@ -30,7 +36,9 @@ import {
   Gift, 
   CreditCard,
   HeartHandshake,
-  UserCheck
+  UserCheck,
+  LogOut,
+  Loader2
 } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -44,18 +52,97 @@ export const App: React.FC = () => {
   const [highContrast, setHighContrast] = useState<boolean>(false);
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
 
-  useEffect(() => {
-    bancoDadosService.init().then(async () => {
-      const senior = await bancoDadosService.getActiveSenior();
-      if (senior) {
-        setActiveSenior(senior);
-        progressoUsuarioService.setUserName(senior.name);
-      }
-    }).catch(err => console.warn('Erro ao inicializar DB:', err));
+  const [perfil, setPerfil] = useState<Perfil | null>(null);
+  const [carregandoAuth, setCarregandoAuth] = useState<boolean>(supabaseConfigurado);
+  const [, setProgressoVersao] = useState<number>(0);
 
+  const sincronizarIdosoDaNuvem = async (p: Perfil) => {
+    await bancoDadosService.init();
+    const seniorLocal: SeniorClient = {
+      id: p.id,
+      name: p.name || 'Participante',
+      ageGroup: p.age_group || '70-79',
+      phone: p.phone || undefined,
+      caregiverName: 'Familiar Vinculado',
+      caregiverPhone: '',
+      caregiverRelationship: 'filho(a)',
+      riskLevel: 'moderado',
+      createdAt: p.created_at,
+      updatedAt: new Date().toISOString()
+    };
+    await bancoDadosService.saveSenior(seniorLocal);
+    bancoDadosService.setActiveSeniorId(seniorLocal.id);
+    setActiveSenior(seniorLocal);
+
+    progressoUsuarioService.usarUsuario(p.id);
+    progressoUsuarioService.setUserName(seniorLocal.name);
+
+    const sessoes = await nuvemService.baixarSessoes(p.id);
+    for (const s of sessoes) {
+      await bancoDadosService.addSession(s, { sincronizar: false });
+    }
+    progressoUsuarioService.reconstruirDeSessoes(sessoes);
+    setProgressoVersao(v => v + 1);
+  };
+
+  const carregarSessao = async () => {
+    if (!supabaseConfigurado) return;
+    setCarregandoAuth(true);
+    try {
+      const p = await authService.obterPerfil();
+      setPerfil(p);
+      if (p?.role === 'senior') {
+        await sincronizarIdosoDaNuvem(p);
+      } else {
+        setActiveSenior(null);
+      }
+    } catch (err) {
+      console.warn('Erro ao carregar perfil autenticado:', err);
+      setPerfil(null);
+    } finally {
+      setCarregandoAuth(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    audioService.stop();
+    setSelectedScenario(null);
+    setCurrentView('catalog');
+    await authService.sair();
+    setPerfil(null);
+    setActiveSenior(null);
+    setProgressoVersao(v => v + 1);
+  };
+
+  useEffect(() => {
     audioService.registerStateChange((speaking) => {
       setIsSpeaking(speaking);
     });
+
+    if (!supabaseConfigurado) {
+      bancoDadosService.init().then(async () => {
+        const senior = await bancoDadosService.getActiveSenior();
+        if (senior) {
+          setActiveSenior(senior);
+          progressoUsuarioService.setUserName(senior.name);
+        }
+      }).catch(err => console.warn('Erro ao inicializar DB:', err));
+      return;
+    }
+
+    carregarSessao();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') {
+        setPerfil(null);
+        setActiveSenior(null);
+        setSelectedScenario(null);
+        setCurrentView('catalog');
+        setCarregandoAuth(false);
+      } else if (event === 'SIGNED_IN') {
+        carregarSessao();
+      }
+    });
+    return () => subscription.unsubscribe();
   }, []);
 
   const handleWelcomeSpeech = () => {
@@ -88,12 +175,38 @@ export const App: React.FC = () => {
 
       {/* Conteúdo Principal */}
       <div className={`flex-1 flex flex-col items-center ${
-        selectedScenario || currentView !== 'catalog'
+        selectedScenario || currentView !== 'catalog' || (supabaseConfigurado && perfil?.role !== 'senior')
           ? 'p-0 sm:p-3 md:p-4 justify-start' 
           : 'p-3 sm:p-6 justify-center'
       }`}>
-        {/* Visualização 1: Cenário em Andamento (Simulador WhatsApp / SMS / Ligação) */}
-        {selectedScenario ? (
+        {supabaseConfigurado && carregandoAuth ? (
+          <div className="flex flex-col items-center justify-center py-20 gap-3">
+            <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
+            <p className="font-bold text-sm opacity-75">Verificando seu acesso...</p>
+          </div>
+        ) : supabaseConfigurado && !perfil ? (
+          <TelaLogin
+            onAuthSuccess={carregarSessao}
+            highContrast={highContrast}
+            fontSizeLevel={fontSizeLevel}
+          />
+        ) : supabaseConfigurado && perfil?.role === 'admin' ? (
+          <PainelAdmin
+            perfil={perfil}
+            onLogout={handleLogout}
+            highContrast={highContrast}
+            fontSizeLevel={fontSizeLevel}
+          />
+        ) : supabaseConfigurado && perfil?.role === 'family' ? (
+          <PortalVulnerabilidadeFamilia
+            perfil={perfil}
+            isStandaloneRole
+            onBack={handleLogout}
+            onLogout={handleLogout}
+            highContrast={highContrast}
+            fontSizeLevel={fontSizeLevel}
+          />
+        ) : selectedScenario ? (
           <SimuladorWhatsapp
             key={selectedScenario.id}
             scenario={selectedScenario}
@@ -157,27 +270,38 @@ export const App: React.FC = () => {
         ) : (
           /* Visualização 4: Tela Inicial / Catálogo de Treinamentos */
           <div className="max-w-3xl w-full mx-auto space-y-6">
+            {/* Aviso discreto quando rodando sem variáveis do Supabase */}
+            {!supabaseConfigurado && (
+              <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-semibold">
+                Modo demonstração local: os dados ficam salvos apenas neste aparelho. Configure o Supabase no <code>.env</code> para ativar o login entre celulares.
+              </div>
+            )}
+
             {/* Barra de Ações Rápidas */}
             <div className="flex flex-wrap items-center justify-between gap-2.5">
               <span className="text-xs font-bold text-slate-600 flex items-center gap-1.5">
                 <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                Projeto de Extensão Universitária • Segurança Digital
+                {supabaseConfigurado && perfil
+                  ? `Olá, ${perfil.name || userName}!`
+                  : 'Projeto de Extensão Universitária • Segurança Digital'}
               </span>
 
               <div className="flex flex-wrap items-center gap-2">
-                {/* Botão de Identificação / Login do Idoso */}
-                <button
-                  onClick={() => {
-                    audioService.stop();
-                    setShowLoginModal(true);
-                  }}
-                  className="px-3 py-1.5 rounded-xl bg-purple-100 text-purple-950 border border-purple-300 hover:bg-purple-200 active:scale-95 transition-all text-xs font-black flex items-center gap-1.5 shadow-sm"
-                  title="Alterar ou gerenciar quem está participando do treinamento"
-                >
-                  <UserCheck className="w-3.5 h-3.5 text-purple-700" />
-                  <span>Participante: {activeSenior?.name || userName}</span>
-                  <span className="text-[10px] bg-purple-300 text-purple-950 px-1.5 py-0.2 rounded font-black">Trocar</span>
-                </button>
+                {/* Botão de Identificação / Login local (apenas modo demonstração offline) */}
+                {!supabaseConfigurado && (
+                  <button
+                    onClick={() => {
+                      audioService.stop();
+                      setShowLoginModal(true);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-purple-100 text-purple-950 border border-purple-300 hover:bg-purple-200 active:scale-95 transition-all text-xs font-black flex items-center gap-1.5 shadow-sm"
+                    title="Alterar ou gerenciar quem está participando do treinamento"
+                  >
+                    <UserCheck className="w-3.5 h-3.5 text-purple-700" />
+                    <span>Participante: {activeSenior?.name || userName}</span>
+                    <span className="text-[10px] bg-purple-300 text-purple-950 px-1.5 py-0.2 rounded font-black">Trocar</span>
+                  </button>
+                )}
 
                 <button
                   onClick={() => {
@@ -191,29 +315,33 @@ export const App: React.FC = () => {
                   <span>Meu Progresso ({completedSafeCount}/{totalScenarios})</span>
                 </button>
 
-                <button
-                  onClick={() => {
-                    audioService.stop();
-                    setCurrentView('dashboard');
-                  }}
-                  className="px-3 py-1.5 rounded-xl bg-blue-50 text-blue-800 border border-blue-200 hover:bg-blue-100 active:scale-95 transition-all text-xs font-extrabold flex items-center gap-1.5 shadow-sm"
-                  title="Ver métricas acadêmicas do projeto para o professor"
-                >
-                  <BarChart3 className="w-3.5 h-3.5 text-blue-600" />
-                  <span>Painel do Professor / Métricas</span>
-                </button>
+                {!supabaseConfigurado && (
+                  <>
+                    <button
+                      onClick={() => {
+                        audioService.stop();
+                        setCurrentView('dashboard');
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-blue-50 text-blue-800 border border-blue-200 hover:bg-blue-100 active:scale-95 transition-all text-xs font-extrabold flex items-center gap-1.5 shadow-sm"
+                      title="Ver métricas acadêmicas do projeto para o professor"
+                    >
+                      <BarChart3 className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Painel do Professor / Métricas</span>
+                    </button>
 
-                <button
-                  onClick={() => {
-                    audioService.stop();
-                    setCurrentView('family');
-                  }}
-                  className="px-3 py-1.5 rounded-xl bg-purple-50 text-purple-900 border border-purple-300 hover:bg-purple-100 active:scale-95 transition-all text-xs font-extrabold flex items-center gap-1.5 shadow-sm"
-                  title="Portal da Família e Diagnóstico de Vulnerabilidade do Idoso"
-                >
-                  <HeartHandshake className="w-3.5 h-3.5 text-purple-700" />
-                  <span>Portal da Família</span>
-                </button>
+                    <button
+                      onClick={() => {
+                        audioService.stop();
+                        setCurrentView('family');
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-purple-50 text-purple-900 border border-purple-300 hover:bg-purple-100 active:scale-95 transition-all text-xs font-extrabold flex items-center gap-1.5 shadow-sm"
+                      title="Portal da Família e Diagnóstico de Vulnerabilidade do Idoso"
+                    >
+                      <HeartHandshake className="w-3.5 h-3.5 text-purple-700" />
+                      <span>Portal da Família</span>
+                    </button>
+                  </>
+                )}
 
                 <button
                   onClick={() => {
@@ -226,6 +354,17 @@ export const App: React.FC = () => {
                   <Award className="w-3.5 h-3.5 text-amber-600" />
                   <span>Certificado</span>
                 </button>
+
+                {supabaseConfigurado && perfil && (
+                  <button
+                    onClick={handleLogout}
+                    className="px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white active:scale-95 transition-all text-xs font-black flex items-center gap-1.5 shadow-sm"
+                    title="Sair da sua conta"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>Sair</span>
+                  </button>
+                )}
               </div>
             </div>
 
@@ -307,37 +446,48 @@ export const App: React.FC = () => {
               </span>
             </div>
 
-            {/* Card de Atalho para o Portal da Família & Cuidadores */}
-            <div
-              onClick={() => {
-                audioService.stop();
-                setCurrentView('family');
-              }}
-              className={`p-4 rounded-3xl border-2 transition-all cursor-pointer flex items-center justify-between gap-3 shadow-sm hover:shadow-md active:scale-[0.99] ${
-                highContrast
-                  ? 'bg-zinc-900 border-yellow-400 text-white'
-                  : 'bg-gradient-to-r from-purple-50 via-white to-pink-50 border-purple-200 hover:border-purple-400'
-              }`}
-              title="Abrir o Portal da Família e Recomendações aos Cuidadores"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-10 px-2 rounded-2xl bg-purple-700 text-white font-black text-sm flex items-center justify-center shrink-0 shadow-sm">
-                  <HeartHandshake className="w-5 h-5" />
+            {/* Card de Código para Familiar (visível para o idoso logado) */}
+            {supabaseConfigurado && perfil?.role === 'senior' && (
+              <CardCodigoFamilia
+                perfil={perfil}
+                onPerfilAtualizado={setPerfil}
+                highContrast={highContrast}
+              />
+            )}
+
+            {/* Card de Atalho para o Portal da Família & Cuidadores (apenas modo offline) */}
+            {!supabaseConfigurado && (
+              <div
+                onClick={() => {
+                  audioService.stop();
+                  setCurrentView('family');
+                }}
+                className={`p-4 rounded-3xl border-2 transition-all cursor-pointer flex items-center justify-between gap-3 shadow-sm hover:shadow-md active:scale-[0.99] ${
+                  highContrast
+                    ? 'bg-zinc-900 border-yellow-400 text-white'
+                    : 'bg-gradient-to-r from-purple-50 via-white to-pink-50 border-purple-200 hover:border-purple-400'
+                }`}
+                title="Abrir o Portal da Família e Recomendações aos Cuidadores"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-10 px-2 rounded-2xl bg-purple-700 text-white font-black text-sm flex items-center justify-center shrink-0 shadow-sm">
+                    <HeartHandshake className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="text-xs sm:text-sm font-black text-slate-900">
+                      Área para Filhos & Cuidadores • Diagnóstico de Vulnerabilidade
+                    </p>
+                    <p className="text-xs text-slate-600">
+                      Veja os gráficos de vulnerabilidade daquele idoso, histórico de testes e checklist de proteção familiar.
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-xs sm:text-sm font-black text-slate-900">
-                    Área para Filhos & Cuidadores • Diagnóstico de Vulnerabilidade
-                  </p>
-                  <p className="text-xs text-slate-600">
-                    Veja os gráficos de vulnerabilidade daquele idoso, histórico de testes e checklist de proteção familiar.
-                  </p>
-                </div>
+                <span className="text-xs font-black text-purple-700 flex items-center gap-1 shrink-0">
+                  <span className="hidden sm:inline">Ver Laudo Familiar</span>
+                  <ArrowRight className="w-4 h-4" />
+                </span>
               </div>
-              <span className="text-xs font-black text-purple-700 flex items-center gap-1 shrink-0">
-                <span className="hidden sm:inline">Ver Laudo Familiar</span>
-                <ArrowRight className="w-4 h-4" />
-              </span>
-            </div>
+            )}
 
             {/* Seção: Escolha seu Treinamento */}
             <div className="space-y-4">

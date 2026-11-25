@@ -27,6 +27,14 @@ create table if not exists public.family_links (
   primary key (family_id, senior_id)
 );
 
+-- Registro de tentativas incorretas de código de convite (rate limit)
+create table if not exists public.invite_code_attempts (
+  id           bigint generated always as identity primary key,
+  user_id      uuid not null references auth.users (id) on delete cascade,
+  attempted_at timestamptz not null default now()
+);
+create index if not exists invite_attempts_user_idx on public.invite_code_attempts (user_id, attempted_at desc);
+
 -- -----------------------------------------------------------------------------
 -- 2. TREINOS, FEEDBACKS E EXPRESSÕES NÃO RECONHECIDAS
 -- -----------------------------------------------------------------------------
@@ -53,7 +61,7 @@ create table if not exists public.feedback (
   scenario_title text,
   category       text check (category in ('ocorrido', 'dificuldade', 'sugestao', 'outro')),
   rating         int check (rating between 1 and 5),
-  comment        text not null default '',
+  comment        text not null default '' check (char_length(comment) <= 2000),
   audio_path     text,                   -- caminho no bucket 'feedback-audio'
   status         text not null default 'novo' check (status in ('novo', 'em_analise', 'resolvido')),
   created_at     timestamptz not null default now()
@@ -65,7 +73,7 @@ create table if not exists public.unrecognized_expressions (
   id              text primary key,
   scenario_id     text,
   scenario_title  text,
-  raw_text        text not null,
+  raw_text        text not null check (char_length(raw_text) <= 500),
   normalized_text text,
   input_type      text,
   stage           text,
@@ -97,13 +105,18 @@ create or replace function public.gen_invite_code()
 returns text language plpgsql volatile set search_path = public as $$
 declare
   alfabeto text := 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; -- sem 0/O/1/I para não confundir
+  bloco1 text;
+  bloco2 text;
   codigo text;
 begin
   loop
-    codigo := 'FAM-';
+    bloco1 := '';
+    bloco2 := '';
     for i in 1..4 loop
-      codigo := codigo || substr(alfabeto, 1 + floor(random() * length(alfabeto))::int, 1);
+      bloco1 := bloco1 || substr(alfabeto, 1 + floor(random() * length(alfabeto))::int, 1);
+      bloco2 := bloco2 || substr(alfabeto, 1 + floor(random() * length(alfabeto))::int, 1);
     end loop;
+    codigo := 'FAM-' || bloco1 || '-' || bloco2;
     exit when not exists (select 1 from public.profiles where invite_code = codigo);
   end loop;
   return codigo;
@@ -142,6 +155,7 @@ create trigger on_auth_user_created
 -- -----------------------------------------------------------------------------
 alter table public.profiles                 enable row level security;
 alter table public.family_links             enable row level security;
+alter table public.invite_code_attempts     enable row level security;
 alter table public.sessions                 enable row level security;
 alter table public.feedback                 enable row level security;
 alter table public.unrecognized_expressions enable row level security;
@@ -204,25 +218,61 @@ create policy unrec_admin on public.unrecognized_expressions for all to authenti
 -- 5. FUNÇÕES CHAMADAS PELO APP
 -- -----------------------------------------------------------------------------
 
--- Familiar digita o código do idoso para passar a acompanhá-lo.
+-- Familiar digita o código do idoso para passar a acompanhá-lo (com limite de tentativas).
 create or replace function public.link_family_by_code(code text, rel text default null)
 returns table (senior_id uuid, senior_name text)
 language plpgsql security definer set search_path = public as $$
 declare
   s public.profiles%rowtype;
+  tentativas_recentes int;
+  codigo_limpo text;
 begin
   if not exists (select 1 from public.profiles where id = auth.uid() and role = 'family') then
     raise exception 'Apenas contas de familiar podem usar código de convite.';
   end if;
+
+  select count(*) into tentativas_recentes
+    from public.invite_code_attempts
+   where user_id = auth.uid()
+     and attempted_at > now() - interval '1 hour';
+
+  if tentativas_recentes >= 5 then
+    raise exception 'Muitas tentativas incorretas. Aguarde 1 hora e tente novamente.';
+  end if;
+
+  codigo_limpo := regexp_replace(upper(trim(coalesce(code, ''))), '[^A-Z0-9]', '', 'g');
+
   select * into s from public.profiles
-   where invite_code = upper(trim(code)) and role = 'senior';
+   where regexp_replace(upper(coalesce(invite_code, '')), '[^A-Z0-9]', '', 'g') = codigo_limpo
+     and role = 'senior';
+
   if not found then
+    insert into public.invite_code_attempts (user_id) values (auth.uid());
     raise exception 'Código não encontrado. Confira as letras com o idoso.';
   end if;
+
+  delete from public.invite_code_attempts where user_id = auth.uid();
+
   insert into public.family_links (family_id, senior_id, relationship)
   values (auth.uid(), s.id, rel)
   on conflict do nothing;
   return query select s.id, s.name;
+end;
+$$;
+
+-- Permite ao idoso gerar um novo código de convite (invalidando o anterior).
+create or replace function public.regenerate_invite_code()
+returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  novo text;
+begin
+  if not exists (select 1 from public.profiles where id = auth.uid() and role = 'senior') then
+    raise exception 'Apenas o participante idoso pode gerar novo código de convite.';
+  end if;
+  novo := public.gen_invite_code();
+  update public.profiles set invite_code = novo where id = auth.uid();
+  return novo;
 end;
 $$;
 
@@ -294,6 +344,7 @@ end;
 $$;
 
 grant execute on function public.link_family_by_code(text, text) to authenticated;
+grant execute on function public.regenerate_invite_code()         to authenticated;
 grant execute on function public.scenario_stats(text)            to authenticated;
 grant execute on function public.admin_metrics()                 to authenticated;
 

@@ -798,6 +798,47 @@ class BancoDadosService {
       }
     });
   }
+
+  public async limparCacheLocal(): Promise<void> {
+    try {
+      localStorage.removeItem(STORAGE_ACTIVE_SENIOR_KEY);
+      localStorage.removeItem(`${DB_NAME}_fallback`);
+    } catch {
+      // Ignora
+    }
+
+    this.memoryFallback = {
+      seniors: {},
+      sessions: {},
+      unrecognized: {},
+      words: {}
+    };
+
+    if (!this.db) return;
+    const db = this.db;
+    const storeNames = [
+      STORE_SENIORS,
+      STORE_SESSIONS,
+      STORE_UNRECOGNIZED,
+      STORE_WORDS,
+      STORE_FEEDBACK
+    ].filter(name => db.objectStoreNames.contains(name));
+
+    if (storeNames.length === 0) return;
+
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(storeNames, 'readwrite');
+        for (const name of storeNames) {
+          tx.objectStore(name).clear();
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      } catch {
+        resolve();
+      }
+    });
+  }
 }
 
 export const bancoDadosService = new BancoDadosService();

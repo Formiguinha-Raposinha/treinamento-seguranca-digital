@@ -185,6 +185,13 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
           </div>
         )}
 
+        {/* Aviso de privacidade (LGPD) */}
+        <div className={`p-3 rounded-xl text-xs font-semibold border ${
+          highContrast ? 'border-yellow-400 text-yellow-200' : 'bg-amber-50 border-amber-200 text-amber-900'
+        }`}>
+          Privacidade: não informe CPF, senhas reais ou dados bancários no texto ou no áudio.
+        </div>
+
         {/* Áudio */}
         <div className="space-y-2">
           <p className="font-bold text-sm">

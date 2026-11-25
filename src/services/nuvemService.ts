@@ -187,6 +187,11 @@ export const nuvemService = {
     }));
   },
 
+  async atualizarStatusExpressao(id: string, status: 'pending' | 'mapped' | 'ignored') {
+    const { error } = await supabase.from('unrecognized_expressions').update({ status }).eq('id', id);
+    if (error) throw new Error(error.message);
+  },
+
   // -------------------------------------------------------------------- ADMIN
   async metricasAdmin(): Promise<MetricasAdmin> {
     const { data, error } = await supabase.rpc('admin_metrics');
